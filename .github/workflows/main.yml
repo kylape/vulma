@@ -1,0 +1,23 @@
+name: Main CI
+
+on:
+  push:
+    branches:
+    - main
+  pull_request:
+
+jobs:
+  ci:
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        cmd:
+        - lint
+        - test
+        - build
+        - image
+    steps:
+      - uses: taiki-e/install-action@just
+      - uses: actions/checkout@v4
+      - run: just ${{ matrix.cmd }}

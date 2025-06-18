@@ -45,7 +45,7 @@ fn main() {
         ])
         .output()
         .expect("rpm command failed");
-    let stdout = str::from_utf8(rpm.stdout.as_slice()).expect("Failed to read stdout");
+    let stdout = std::str::from_utf8(rpm.stdout.as_slice()).expect("Failed to read stdout");
 
     for pkg in stdout.lines() {
         let rpm: Rpm = pkg.into();
