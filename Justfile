@@ -10,4 +10,4 @@ build:
     cargo build --release
 
 image:
-    podman build -t vulma .
+    podman build -t quay.io/mmoltras/vulma .

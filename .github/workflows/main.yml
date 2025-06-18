@@ -16,8 +16,24 @@ jobs:
         - lint
         - test
         - build
-        - image
     steps:
       - uses: taiki-e/install-action@just
       - uses: actions/checkout@v4
       - run: just ${{ matrix.cmd }}
+
+  push-image:
+    runs-on: ubuntu-24.04
+    if: github.event_name == 'push'
+    needs: ci
+    steps:
+      - uses: taiki-e/install-action@just
+      - uses: actions/checkout@v4
+      - run: just image
+      - name: Login to Quay.io
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v2
+        with:
+          registry: quay.io
+          username: ${{ secrets.QUAY_USERNAME }}
+          password: ${{ secrets.QUAY_TOKEN }}
+      - run: podman push quay.io/mmoltras/vulma
