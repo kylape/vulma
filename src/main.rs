@@ -1,4 +1,4 @@
-use std::{fmt::Display, process::Command};
+use std::{env, fmt::Display, process::Command};
 
 #[derive(Debug, Default)]
 struct Rpm {
@@ -37,18 +37,18 @@ impl Display for Rpm {
 }
 
 fn main() {
-    let rpm = Command::new("rpm")
-        .args([
-            "-qa",
-            "--qf",
-            "%{NAME}|%{VERSION}|%{RELEASE}|%{ARCH}|%{SHA256HEADER}\n",
-        ])
-        .output()
-        .expect("rpm command failed");
-    let stdout = std::str::from_utf8(rpm.stdout.as_slice()).expect("Failed to read stdout");
-
-    for pkg in stdout.lines() {
-        let rpm: Rpm = pkg.into();
-        println!("{rpm}")
+    let mut rpm = Command::new("rpm");
+    if let Ok(dbpath) = env::var("VULMA_RPMDB") {
+        rpm.args(["--dbpath", &dbpath]);
     }
+    rpm.args([
+        "-qa",
+        "--qf",
+        "%{NAME}|%{VERSION}|%{RELEASE}|%{ARCH}|%{SHA256HEADER}\n",
+    ]);
+
+    let pkgs = rpm.output().expect("rpm command failed");
+    let stdout = std::str::from_utf8(pkgs.stdout.as_slice()).expect("Failed to read stdout");
+
+    stdout.lines().map(Rpm::from).for_each(|p| println!("{p}"));
 }
