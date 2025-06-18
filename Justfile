@@ -11,3 +11,8 @@ build:
 
 image:
     podman build -t quay.io/mmoltras/vulma .
+
+run: image
+    podman run --rm -it --name vulma \
+        -v /var/lib/rpm:/host/var/lib/rpm:ro \
+        quay.io/mmoltras/vulma
