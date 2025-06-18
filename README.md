@@ -1,4 +1,4 @@
 # VulMa
 
-A very basic agent for scanning RPM packages, integrated with ACS for
-Vulnerability Management in VMs.
+A very basic agent for scanning RPM packages, integrated with stackrox
+for Vulnerability Management in VMs.
