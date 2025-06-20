@@ -16,3 +16,6 @@ run: image
     podman run --rm -it --name vulma \
         -v /var/lib/rpm:/host/var/lib/rpm:ro \
         quay.io/mmoltras/vulma
+
+mock-server:
+    uv run mock-server/server.py

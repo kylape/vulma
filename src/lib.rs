@@ -1,6 +1,7 @@
-use std::{env, process::Command};
+use std::process::Command;
 
 mod rpm;
+use clap::Parser;
 use rpm::{Rpm, RpmError};
 
 #[derive(Debug)]
@@ -8,6 +9,7 @@ pub enum VulmaError {
     IOError(String),
     Utf8Error(String),
     RpmError(RpmError),
+    HttpError(String),
 }
 
 impl From<std::io::Error> for VulmaError {
@@ -28,12 +30,32 @@ impl From<RpmError> for VulmaError {
     }
 }
 
-pub fn run() -> Result<(), VulmaError> {
-    let mut rpm = Command::new("rpm");
-    if let Ok(dbpath) = env::var("VULMA_RPMDB") {
-        rpm.args(["--dbpath", &dbpath]);
+impl From<reqwest::Error> for VulmaError {
+    fn from(value: reqwest::Error) -> Self {
+        VulmaError::HttpError(format!("HTTP request failed: {value}"))
     }
+}
+
+#[derive(Debug, Parser)]
+pub struct Vulma {
+    /// URL to forward the packages to
+    #[arg(env = "VULMA_URL", default_value = "http://localhost:8080")]
+    url: String,
+
+    /// Skip sending packages over HTTP
+    #[arg(short, long)]
+    skip_http: bool,
+
+    /// Path to the rpmdb
+    #[arg(short, long, env = "VULMA_RPMDB", default_value = "/var/lib/rpm")]
+    rpmdb: String,
+}
+
+pub fn run(args: Vulma) -> Result<(), VulmaError> {
+    let mut rpm = Command::new("rpm");
     rpm.args([
+        "--dbpath",
+        &args.rpmdb,
         "-qa",
         "--qf",
         "%{NAME}|%{VERSION}|%{RELEASE}|%{ARCH}|%{SHA256HEADER}\n",
@@ -42,12 +64,19 @@ pub fn run() -> Result<(), VulmaError> {
     let pkgs = rpm.output()?;
     let stdout = std::str::from_utf8(pkgs.stdout.as_slice())?;
 
-    stdout
+    let pkgs = stdout
         .lines()
         .map(str::parse::<Rpm>)
-        .collect::<Result<Vec<_>, _>>()?
-        .iter()
-        .for_each(|p| println!("{p}"));
+        .collect::<Result<Vec<_>, _>>()?;
 
+    println!("Sending updates:");
+    pkgs.iter().for_each(|p| println!("{p}"));
+
+    if !args.skip_http {
+        reqwest::blocking::Client::new()
+            .post(args.url)
+            .json(&pkgs)
+            .send()?;
+    }
     Ok(())
 }

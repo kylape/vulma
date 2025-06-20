@@ -1,5 +1,7 @@
 use std::{fmt::Display, str::FromStr};
 
+use serde::Serialize;
+
 #[derive(Debug, PartialEq)]
 pub enum RpmError {
     ParseError(String),
@@ -7,7 +9,7 @@ pub enum RpmError {
     MissingVersionName(String),
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Serialize)]
 pub struct Rpm {
     name: String,
     version: String,
