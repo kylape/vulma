@@ -9,11 +9,14 @@ WORKDIR /app
 
 COPY . .
 
-RUN cargo build --release
+RUN --mount=type=cache,target=/root/.cargo/registry \
+    --mount=type=cache,target=/app/target \
+    cargo build --release && \
+    cp target/release/vulma vulma
 
 FROM registry.access.redhat.com/ubi8/ubi-minimal:8.10
 
 ENV VULMA_RPMDB=/host/var/lib/rpm
-COPY --from=builder /app/target/release/vulma /usr/local/bin
+COPY --from=builder /app/vulma /usr/local/bin
 
 ENTRYPOINT ["vulma"]
