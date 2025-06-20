@@ -1,6 +1,10 @@
 use core::time;
-use std::{process::Command, thread::sleep};
+use std::process::Command;
 
+use crossbeam::{
+    channel::{bounded, tick},
+    select,
+};
 use log::{debug, info};
 
 mod rpm;
@@ -77,11 +81,27 @@ impl From<VulmaConfig> for Vulma {
 }
 
 pub fn run(args: VulmaConfig) -> anyhow::Result<()> {
-    let interval = time::Duration::from_secs(args.interval);
+    let (tx, rx) = bounded(0);
+    let ticks = tick(time::Duration::from_secs(args.interval));
     let mut vulma: Vulma = args.into();
 
+    ctrlc::set_handler(move || {
+        tx.send(()).unwrap();
+    })
+    .context("Failed setting signal handler")?;
+
+    // Run once before going into the loop
+    vulma.run()?;
+
     loop {
-        vulma.run()?;
-        sleep(interval);
+        select! {
+            recv(ticks) -> _ => vulma.run()?,
+            recv(rx) -> _ => {
+                info!("Shutting down...");
+                break;
+            }
+        }
     }
+
+    Ok(())
 }
