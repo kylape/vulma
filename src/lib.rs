@@ -1,5 +1,7 @@
 use std::process::Command;
 
+use log::{debug, info};
+
 mod rpm;
 use anyhow::Context;
 use clap::Parser;
@@ -21,6 +23,7 @@ pub struct Vulma {
 }
 
 pub fn run(args: Vulma) -> anyhow::Result<()> {
+    info!("Collecting package information...");
     let mut rpm = Command::new("rpm");
     rpm.args([
         "--dbpath",
@@ -34,14 +37,15 @@ pub fn run(args: Vulma) -> anyhow::Result<()> {
     let stdout =
         std::str::from_utf8(pkgs.stdout.as_slice()).context("Failed to parse rpm output")?;
 
+    info!("Parsing...");
     let pkgs = stdout
         .lines()
         .map(str::parse::<Rpm>)
         .collect::<Result<Vec<_>, _>>()
         .context("Failed to parse package information")?;
+    debug!("{pkgs:?}");
 
-    println!("Sending updates:");
-    pkgs.iter().for_each(|p| println!("{p}"));
+    info!("Sending updates...");
 
     if !args.skip_http {
         reqwest::blocking::Client::new()
