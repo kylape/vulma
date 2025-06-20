@@ -1,7 +1,7 @@
 use clap::Parser;
-use vulma::{Vulma, VulmaError};
+use vulma::Vulma;
 
-fn main() -> Result<(), VulmaError> {
+fn main() -> anyhow::Result<()> {
     let args = Vulma::parse();
     vulma::run(args)
 }

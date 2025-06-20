@@ -1,4 +1,4 @@
-use std::{fmt::Display, str::FromStr};
+use std::{error::Error, fmt::Display, str::FromStr};
 
 use serde::Serialize;
 
@@ -8,6 +8,18 @@ pub enum RpmError {
     MissingPackageName,
     MissingVersionName(String),
 }
+
+impl Display for RpmError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            RpmError::ParseError(e) => write!(f, "Rpm parsing failed: {e}"),
+            RpmError::MissingPackageName => write!(f, "Missing package name"),
+            RpmError::MissingVersionName(pkg) => write!(f, "Missing version for '{pkg}'"),
+        }
+    }
+}
+
+impl Error for RpmError {}
 
 #[derive(Debug, PartialEq, Serialize)]
 pub struct Rpm {

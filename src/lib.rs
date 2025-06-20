@@ -1,40 +1,9 @@
 use std::process::Command;
 
 mod rpm;
+use anyhow::Context;
 use clap::Parser;
-use rpm::{Rpm, RpmError};
-
-#[derive(Debug)]
-pub enum VulmaError {
-    IOError(String),
-    Utf8Error(String),
-    RpmError(RpmError),
-    HttpError(String),
-}
-
-impl From<std::io::Error> for VulmaError {
-    fn from(value: std::io::Error) -> Self {
-        VulmaError::IOError(format!("rpm command failed: {}", value))
-    }
-}
-
-impl From<std::str::Utf8Error> for VulmaError {
-    fn from(value: std::str::Utf8Error) -> Self {
-        VulmaError::Utf8Error(format!("Failed to read stdout: {}", value))
-    }
-}
-
-impl From<RpmError> for VulmaError {
-    fn from(value: RpmError) -> Self {
-        VulmaError::RpmError(value)
-    }
-}
-
-impl From<reqwest::Error> for VulmaError {
-    fn from(value: reqwest::Error) -> Self {
-        VulmaError::HttpError(format!("HTTP request failed: {value}"))
-    }
-}
+use rpm::Rpm;
 
 #[derive(Debug, Parser)]
 pub struct Vulma {
@@ -51,7 +20,7 @@ pub struct Vulma {
     rpmdb: String,
 }
 
-pub fn run(args: Vulma) -> Result<(), VulmaError> {
+pub fn run(args: Vulma) -> anyhow::Result<()> {
     let mut rpm = Command::new("rpm");
     rpm.args([
         "--dbpath",
@@ -61,13 +30,15 @@ pub fn run(args: Vulma) -> Result<(), VulmaError> {
         "%{NAME}|%{VERSION}|%{RELEASE}|%{ARCH}|%{SHA256HEADER}\n",
     ]);
 
-    let pkgs = rpm.output()?;
-    let stdout = std::str::from_utf8(pkgs.stdout.as_slice())?;
+    let pkgs = rpm.output().context("Failed to run rpm command")?;
+    let stdout =
+        std::str::from_utf8(pkgs.stdout.as_slice()).context("Failed to parse rpm output")?;
 
     let pkgs = stdout
         .lines()
         .map(str::parse::<Rpm>)
-        .collect::<Result<Vec<_>, _>>()?;
+        .collect::<Result<Vec<_>, _>>()
+        .context("Failed to parse package information")?;
 
     println!("Sending updates:");
     pkgs.iter().for_each(|p| println!("{p}"));
@@ -76,7 +47,8 @@ pub fn run(args: Vulma) -> Result<(), VulmaError> {
         reqwest::blocking::Client::new()
             .post(args.url)
             .json(&pkgs)
-            .send()?;
+            .send()
+            .context("Failed to post package information")?;
     }
     Ok(())
 }
