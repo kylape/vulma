@@ -2,11 +2,12 @@ use std::{error::Error, fmt::Display, str::FromStr};
 
 use storage::EmbeddedImageScanComponent;
 
+#[allow(clippy::enum_variant_names)]
 pub mod storage {
     tonic::include_proto!("storage");
 }
 
-pub mod virtual_machine_service_client {
+pub mod sensor {
     tonic::include_proto!("sensor");
 }
 
@@ -31,12 +32,12 @@ impl Error for ClientError {}
 
 impl storage::EmbeddedImageScanComponent {
     fn new(name: &str, version: &str, release: &str, arch: &str) -> Self {
-        let mut s = EmbeddedImageScanComponent::default();
-        s.name = name.into();
-        s.version = format!("{version}-{release}");
-        s.architecture = arch.into();
-
-        s
+        Self {
+            name: name.into(),
+            version: format!("{version}-{release}"),
+            architecture: arch.into(),
+            ..Default::default()
+        }
     }
 }
 

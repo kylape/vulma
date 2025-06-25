@@ -4,10 +4,10 @@ use std::{env, fs::read_to_string, path::PathBuf, process::Command, sync::LazyLo
 use anyhow::Context;
 use clap::Parser;
 use client::{
-    storage::{EmbeddedImageScanComponent, VirtualMachine, VirtualMachineScan},
-    virtual_machine_service_client::{
+    sensor::{
         virtual_machine_service_client::VirtualMachineServiceClient, UpsertVirtualMachineRequest,
     },
+    storage::{EmbeddedImageScanComponent, VirtualMachine, VirtualMachineScan},
 };
 use crossbeam::{
     channel::{bounded, tick},
