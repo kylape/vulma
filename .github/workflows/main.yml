@@ -18,6 +18,7 @@ jobs:
         - build
     steps:
       - uses: taiki-e/install-action@just
+      - run: sudo apt install -y protobuf-compiler
       - uses: actions/checkout@v4
         with:
           submodules: true
