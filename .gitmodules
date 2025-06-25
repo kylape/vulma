@@ -1,0 +1,4 @@
+[submodule "stackrox"]
+	path = stackrox
+	url = https://github.com/stackrox/stackrox
+	branch = klape/rox-27667

@@ -12,11 +12,11 @@ build:
 image:
     podman build -t quay.io/mmoltras/vulma .
 
-run +args: image
+run *args: image
     podman run --rm -it --name vulma \
         --network host \
-        -v /var/lib/rpm:/host/var/lib/rpm:ro \
+        -v /:/host:ro \
         quay.io/mmoltras/vulma {{args}}
 
 mock-server:
-    uv run mock-server/server.py
+    cargo run --release --bin mock-server
