@@ -2,6 +2,7 @@ use core::time;
 use std::{env, fs::read_to_string, path::PathBuf, process::Command, sync::LazyLock};
 
 use anyhow::Context;
+use certs::Certs;
 use clap::Parser;
 use client::{
     sensor::{
@@ -14,7 +15,9 @@ use crossbeam::{
     select,
 };
 use log::{debug, info};
+use tonic::transport::{Channel, ClientTlsConfig};
 
+mod certs;
 mod client;
 
 static HOST_MOUNT: LazyLock<PathBuf> =
@@ -48,11 +51,16 @@ pub struct VulmaConfig {
     /// Interval between package scanning in seconds
     #[arg(short, long, env = "VULMA_INTERVAL", default_value_t = 3600)]
     interval: u64,
+
+    /// Directory holding the mTLS certificates and keys
+    #[arg(short, long, env = "VULMA_CERTS")]
+    certs: Option<PathBuf>,
 }
 
 struct Vulma {
     url: Option<String>,
     cmd: Command,
+    certs: Option<Certs>,
 }
 
 impl Vulma {
@@ -73,28 +81,54 @@ impl Vulma {
         info!("Sending updates...");
 
         if let Some(url) = &self.url {
-            let mut client = VirtualMachineServiceClient::connect(url.clone()).await?;
-            let scan = VirtualMachineScan {
-                components: pkgs,
-                ..Default::default()
-            };
-            let vm = VirtualMachine {
-                id: HOSTNAME.to_string(),
-                scan: Some(scan),
-                ..Default::default()
-            };
-            let request = UpsertVirtualMachineRequest {
-                virtual_machine: Some(vm),
-            };
-
-            client.upsert_virtual_machine(request).await?;
+            self.send(url.to_string(), pkgs).await?;
         }
+        Ok(())
+    }
+
+    async fn create_client(
+        &self,
+        url: String,
+    ) -> anyhow::Result<VirtualMachineServiceClient<tonic::transport::Channel>> {
+        let mut channel = Channel::from_shared(url)?;
+
+        if let Some(certs) = &self.certs {
+            let tls = ClientTlsConfig::new()
+                .domain_name("sensor.stackrox.svc")
+                .ca_certificate(certs.ca.clone())
+                .identity(certs.identity.clone());
+            channel = channel.tls_config(tls)?;
+        }
+
+        let channel = channel.connect().await?;
+        let client = VirtualMachineServiceClient::new(channel);
+        Ok(client)
+    }
+
+    async fn send(&self, url: String, pkgs: Vec<EmbeddedImageScanComponent>) -> anyhow::Result<()> {
+        let mut client = self.create_client(url).await?;
+        let scan = VirtualMachineScan {
+            components: pkgs,
+            ..Default::default()
+        };
+        let vm = VirtualMachine {
+            id: HOSTNAME.to_string(),
+            scan: Some(scan),
+            ..Default::default()
+        };
+        let request = UpsertVirtualMachineRequest {
+            virtual_machine: Some(vm),
+        };
+
+        client.upsert_virtual_machine(request).await?;
         Ok(())
     }
 }
 
-impl From<VulmaConfig> for Vulma {
-    fn from(cfg: VulmaConfig) -> Self {
+impl TryFrom<VulmaConfig> for Vulma {
+    type Error = anyhow::Error;
+
+    fn try_from(cfg: VulmaConfig) -> Result<Self, Self::Error> {
         let url = if !cfg.skip_http { Some(cfg.url) } else { None };
         let mut cmd = Command::new("rpm");
         cmd.args([
@@ -104,15 +138,20 @@ impl From<VulmaConfig> for Vulma {
             "--qf",
             "%{NAME}|%{VERSION}|%{RELEASE}|%{ARCH}\n",
         ]);
+        let certs = if let Some(path) = cfg.certs {
+            Some(path.try_into()?)
+        } else {
+            None
+        };
 
-        Vulma { url, cmd }
+        Ok(Vulma { url, cmd, certs })
     }
 }
 
 pub async fn run(args: VulmaConfig) -> anyhow::Result<()> {
     let (tx, rx) = bounded(0);
     let ticks = tick(time::Duration::from_secs(args.interval));
-    let mut vulma: Vulma = args.into();
+    let mut vulma: Vulma = args.try_into()?;
 
     ctrlc::set_handler(move || {
         tx.send(()).unwrap();
