@@ -1,5 +1,5 @@
 use core::time;
-use std::{env, fs::read_to_string, path::PathBuf, process::Command, sync::LazyLock};
+use std::{env, fs::read_to_string, path::PathBuf, process::Command, str::FromStr, sync::LazyLock};
 
 use anyhow::Context;
 use certs::Certs;
@@ -15,7 +15,11 @@ use crossbeam::{
     select,
 };
 use log::{debug, info};
-use tonic::transport::{Channel, ClientTlsConfig};
+use tonic::{
+    metadata::MetadataValue,
+    service::{interceptor::InterceptedService, Interceptor},
+    transport::{Channel, ClientTlsConfig},
+};
 
 mod certs;
 mod client;
@@ -33,6 +37,22 @@ static HOSTNAME: LazyLock<String> = LazyLock::new(|| {
     }
     "no-hostname".to_string()
 });
+
+#[derive(Debug, Clone)]
+struct UserAgentInterceptor {}
+
+impl Interceptor for UserAgentInterceptor {
+    fn call(
+        &mut self,
+        mut request: tonic::Request<()>,
+    ) -> Result<tonic::Request<()>, tonic::Status> {
+        request.metadata_mut().insert(
+            "user-agent",
+            MetadataValue::from_str("Rox Admission Controller").unwrap(),
+        );
+        Ok(request)
+    }
+}
 
 #[derive(Debug, Parser)]
 pub struct VulmaConfig {
@@ -61,6 +81,7 @@ struct Vulma {
     url: Option<String>,
     cmd: Command,
     certs: Option<Certs>,
+    user_agent: UserAgentInterceptor,
 }
 
 impl Vulma {
@@ -89,7 +110,9 @@ impl Vulma {
     async fn create_client(
         &self,
         url: String,
-    ) -> anyhow::Result<VirtualMachineServiceClient<tonic::transport::Channel>> {
+    ) -> anyhow::Result<
+        VirtualMachineServiceClient<InterceptedService<Channel, UserAgentInterceptor>>,
+    > {
         let mut channel = Channel::from_shared(url)?;
 
         if let Some(certs) = &self.certs {
@@ -101,7 +124,8 @@ impl Vulma {
         }
 
         let channel = channel.connect().await?;
-        let client = VirtualMachineServiceClient::new(channel);
+        let client =
+            VirtualMachineServiceClient::with_interceptor(channel, self.user_agent.clone());
         Ok(client)
     }
 
@@ -144,7 +168,12 @@ impl TryFrom<VulmaConfig> for Vulma {
             None
         };
 
-        Ok(Vulma { url, cmd, certs })
+        Ok(Vulma {
+            url,
+            cmd,
+            certs,
+            user_agent: UserAgentInterceptor {},
+        })
     }
 }
 
