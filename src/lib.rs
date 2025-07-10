@@ -14,15 +14,17 @@ use crossbeam::{
     channel::{bounded, tick},
     select,
 };
-use log::{debug, info};
+use log::{debug, info, warn};
 use tonic::{
     metadata::MetadataValue,
     service::{interceptor::InterceptedService, Interceptor},
     transport::{Channel, ClientTlsConfig},
 };
+use vsock::VsockClient;
 
 mod certs;
 mod client;
+mod vsock;
 
 static HOST_MOUNT: LazyLock<PathBuf> =
     LazyLock::new(|| env::var("VULMA_HOST_MOUNT").unwrap_or_default().into());
@@ -64,6 +66,10 @@ pub struct VulmaConfig {
     #[arg(short, long)]
     skip_http: bool,
 
+    /// Use VSOCK instead of HTTP/gRPC for communication
+    #[arg(long, env = "VULMA_USE_VSOCK")]
+    use_vsock: bool,
+
     /// Path to the rpmdb
     #[arg(short, long, env = "VULMA_RPMDB", default_value = "/var/lib/rpm")]
     rpmdb: String,
@@ -82,6 +88,7 @@ struct Vulma {
     cmd: Command,
     certs: Option<Certs>,
     user_agent: UserAgentInterceptor,
+    use_vsock: bool,
 }
 
 impl Vulma {
@@ -101,8 +108,10 @@ impl Vulma {
 
         info!("Sending updates...");
 
-        if let Some(url) = &self.url {
-            self.send(url.to_string(), pkgs).await?;
+        if self.use_vsock {
+            self.send_vsock(pkgs).await?;
+        } else if let Some(url) = &self.url {
+            self.send_grpc(url.to_string(), pkgs).await?;
         }
         Ok(())
     }
@@ -129,7 +138,7 @@ impl Vulma {
         Ok(client)
     }
 
-    async fn send(&self, url: String, pkgs: Vec<EmbeddedImageScanComponent>) -> anyhow::Result<()> {
+    async fn send_grpc(&self, url: String, pkgs: Vec<EmbeddedImageScanComponent>) -> anyhow::Result<()> {
         let mut client = self.create_client(url).await?;
         let scan = VirtualMachineScan {
             components: pkgs,
@@ -145,6 +154,39 @@ impl Vulma {
         };
 
         client.upsert_virtual_machine(request).await?;
+        Ok(())
+    }
+
+    async fn send_vsock(&self, pkgs: Vec<EmbeddedImageScanComponent>) -> anyhow::Result<()> {
+        if !VsockClient::is_available() {
+            return Err(anyhow::anyhow!("VSOCK is not available on this system"));
+        }
+
+        let mut client = VsockClient::connect()
+            .context("Failed to connect to VSOCK endpoint")?;
+
+        // Create package data message
+        let scan = VirtualMachineScan {
+            components: pkgs,
+            ..Default::default()
+        };
+        let vm = VirtualMachine {
+            id: HOSTNAME.to_string(),
+            scan: Some(scan),
+            ..Default::default()
+        };
+
+        // Serialize the VM data to bytes
+        // For now, we'll use a simple JSON serialization
+        // In production, you'd want to use protobuf
+        let data = serde_json::to_vec(&vm)
+            .context("Failed to serialize VM data")?;
+
+        // Send with message type 1 (package data)
+        client.send_data(1, &data)
+            .context("Failed to send VM data via VSOCK")?;
+
+        info!("Successfully sent {} packages via VSOCK", vm.scan.as_ref().map(|s| s.components.len()).unwrap_or(0));
         Ok(())
     }
 }
@@ -173,6 +215,7 @@ impl TryFrom<VulmaConfig> for Vulma {
             cmd,
             certs,
             user_agent: UserAgentInterceptor {},
+            use_vsock: cfg.use_vsock,
         })
     }
 }
@@ -181,6 +224,21 @@ pub async fn run(args: VulmaConfig) -> anyhow::Result<()> {
     let (tx, rx) = bounded(0);
     let ticks = tick(time::Duration::from_secs(args.interval));
     let mut vulma: Vulma = args.try_into()?;
+
+    // Check VSOCK availability if requested
+    if vulma.use_vsock {
+        if !VsockClient::is_available() {
+            return Err(anyhow::anyhow!(
+                "VSOCK support requested but not available on this system. \
+                Ensure the VM has autoattachVSOCK: true configured."
+            ));
+        }
+        info!("Using VSOCK communication mode");
+    } else if vulma.url.is_some() {
+        info!("Using gRPC communication mode");
+    } else {
+        info!("No communication method configured (dry run mode)");
+    }
 
     ctrlc::set_handler(move || {
         tx.send(()).unwrap();
