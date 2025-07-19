@@ -14,7 +14,8 @@ use crossbeam::{
     channel::{bounded, tick},
     select,
 };
-use log::{debug, info, warn};
+use log::{debug, info};
+use prost::Message;
 use tonic::{
     metadata::MetadataValue,
     service::{interceptor::InterceptedService, Interceptor},
@@ -176,14 +177,11 @@ impl Vulma {
             ..Default::default()
         };
 
-        // Serialize the VM data to bytes
-        // For now, we'll use a simple JSON serialization
-        // In production, you'd want to use protobuf
-        let data = serde_json::to_vec(&vm)
-            .context("Failed to serialize VM data")?;
+        // Serialize the VM data to protobuf bytes
+        let data = vm.encode_to_vec();
 
-        // Send with message type 1 (package data)
-        client.send_data(1, &data)
+        // Send the protobuf data
+        client.send_data(&data)
             .context("Failed to send VM data via VSOCK")?;
 
         info!("Successfully sent {} packages via VSOCK", vm.scan.as_ref().map(|s| s.components.len()).unwrap_or(0));

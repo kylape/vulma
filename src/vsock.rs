@@ -1,16 +1,16 @@
-use std::os::unix::io::{AsRawFd, RawFd};
-use std::io::{self, Write, Read};
+use std::os::unix::io::{AsRawFd, RawFd, OwnedFd};
+use std::io;
 use anyhow::{Context, Result};
-use log::{debug, info, warn};
+use log::{debug, info};
 use nix::sys::socket::{
-    bind, connect, socket, AddressFamily, SockAddr, SockFlag, SockType, VsockAddr,
+    connect, socket, AddressFamily, SockFlag, SockType, VsockAddr,
 };
 
-const VSOCK_PORT: u32 = 514; // Same port as used by vsock-listener
+const VSOCK_PORT: u32 = 818; // Same port as used by vsock-listener
 const VMADDR_CID_HOST: u32 = 2; // Host context ID
 
 pub struct VsockClient {
-    fd: RawFd,
+    fd: OwnedFd,
 }
 
 impl VsockClient {
@@ -28,21 +28,19 @@ impl VsockClient {
         .context("Failed to create VSOCK socket")?;
         
         // Connect to host
-        let addr = SockAddr::Vsock(VsockAddr::new(VMADDR_CID_HOST, VSOCK_PORT));
-        connect(fd, &addr).context("Failed to connect to VSOCK host")?;
+        let addr = VsockAddr::new(VMADDR_CID_HOST, VSOCK_PORT);
+        connect(fd.as_raw_fd(), &addr).context("Failed to connect to VSOCK host")?;
         
         info!("Successfully connected to host via VSOCK");
         Ok(VsockClient { fd })
     }
     
     /// Send data with protocol header
-    pub fn send_data(&mut self, message_type: u32, data: &[u8]) -> Result<()> {
-        debug!("Sending VSOCK message: type={}, len={}", message_type, data.len());
+    pub fn send_data(&mut self, data: &[u8]) -> Result<()> {
+        debug!("Sending VSOCK message: len={}", data.len());
         
-        // Create message header (8 bytes: 4 bytes length + 4 bytes type)
-        let mut header = [0u8; 8];
-        header[0..4].copy_from_slice(&(data.len() as u32).to_le_bytes());
-        header[4..8].copy_from_slice(&message_type.to_le_bytes());
+        // Create message header (4 bytes: length only)
+        let header = (data.len() as u32).to_le_bytes();
         
         // Send header
         self.write_all(&header)
@@ -69,7 +67,7 @@ impl VsockClient {
     /// Write all bytes to the socket
     fn write_all(&mut self, mut buf: &[u8]) -> io::Result<()> {
         while !buf.is_empty() {
-            match nix::unistd::write(self.fd, buf) {
+            match nix::unistd::write(&self.fd, buf) {
                 Ok(0) => return Err(io::Error::new(
                     io::ErrorKind::WriteZero,
                     "failed to write whole buffer"
@@ -85,7 +83,7 @@ impl VsockClient {
     /// Read exact number of bytes from the socket
     fn read_exact(&mut self, mut buf: &mut [u8]) -> io::Result<()> {
         while !buf.is_empty() {
-            match nix::unistd::read(self.fd, buf) {
+            match nix::unistd::read(self.fd.as_raw_fd(), buf) {
                 Ok(0) => return Err(io::Error::new(
                     io::ErrorKind::UnexpectedEof,
                     "failed to fill whole buffer"
@@ -110,8 +108,8 @@ impl VsockClient {
             SockFlag::empty(),
             None,
         ) {
-            Ok(fd) => {
-                let _ = nix::unistd::close(fd);
+            Ok(_fd) => {
+                // fd will be automatically closed when dropped
                 true
             }
             Err(_) => false,
@@ -121,14 +119,12 @@ impl VsockClient {
 
 impl Drop for VsockClient {
     fn drop(&mut self) {
-        if let Err(e) = nix::unistd::close(self.fd) {
-            warn!("Failed to close VSOCK socket: {}", e);
-        }
+        // OwnedFd automatically closes the file descriptor when dropped
     }
 }
 
 impl AsRawFd for VsockClient {
     fn as_raw_fd(&self) -> RawFd {
-        self.fd
+        self.fd.as_raw_fd()
     }
 }
